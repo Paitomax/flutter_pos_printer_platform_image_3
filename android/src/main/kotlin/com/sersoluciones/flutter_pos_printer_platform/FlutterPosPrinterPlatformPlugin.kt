@@ -177,7 +177,9 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
         messageChannel = null
         messageUSBChannel = null
 
-        bluetoothService.setHandler(null)
+        if (this::bluetoothService.isInitialized) {
+            bluetoothService.setHandler(null)
+        }
         adapter.setHandler(null)
     }
 
@@ -227,7 +229,9 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
     override fun onDetachedFromActivityForConfigChanges() {
         Log.d(TAG, "onDetachedFromActivityForConfigChanges")
         currentActivity = null
-        bluetoothService.setActivity(null)
+        if (this::bluetoothService.isInitialized) {
+            bluetoothService.setActivity(null)
+        }
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
@@ -241,7 +245,9 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
     override fun onDetachedFromActivity() {
         Log.d(TAG, "onDetachedFromActivity")
         currentActivity = null
-        bluetoothService.setActivity(null)
+        if (this::bluetoothService.isInitialized) {
+            bluetoothService.setActivity(null)
+        }
     }
 
     override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
