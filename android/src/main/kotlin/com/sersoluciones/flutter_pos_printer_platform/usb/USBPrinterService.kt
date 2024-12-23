@@ -65,10 +65,6 @@ class USBPrinterService private constructor(private var mHandler: Handler?) {
                 }
 
             } else if ((UsbManager.ACTION_USB_DEVICE_ATTACHED == action)) {
-                Log.i(
-                    LOG_TAG,
-                    "USB_DEVICE_ATTACHED"
-                )
 //                if (mUsbDevice != null) {
 //                    Toast.makeText(context, "USB device has been turned off", Toast.LENGTH_LONG).show()
 //                    closeConnectionIfExists()

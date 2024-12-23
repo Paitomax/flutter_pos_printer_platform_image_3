@@ -1,3 +1,23 @@
+## 1.2.4
+
+* Relax rxdart version to allow library usage in FlutterFlow app builder
+
+## 1.2.3
+
+* Add namespace in build.gradle to be compatible with Gradle 8 (credit: https://github.com/tgarm)
+* Fix some errors in Android library (credit: https://github.com/tgarm)
+* Update rxdart minor version (credit: https://github.com/ivankasalo)
+* Fix windows build (credit: https://github.com/sedess)
+
+## 1.2.2
+
+* Fix incorrect ActivityAware lifecycle hooks
+* Fix issue in PendingIntent for Android 14+
+
+## 1.2.1
+
+* Attempt to fix initialized error
+
 ## 1.1.0
 
 * Toast msgs english locale default

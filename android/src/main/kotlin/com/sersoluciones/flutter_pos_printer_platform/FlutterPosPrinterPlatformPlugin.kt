@@ -30,6 +30,7 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.PluginRegistry
+import io.flutter.plugin.common.BinaryMessenger
 
 /** FlutterPosPrinterPlatformPlugin */
 class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, PluginRegistry.RequestPermissionsResultListener,
@@ -39,8 +40,12 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
     ///
     /// This local reference serves to register the plugin with the Flutter Engine and unregister it
     /// when the Flutter Engine is detached from the Activity
-    private lateinit var channel: MethodChannel
 
+    private final var TAG = "FlutterPosPrinterPlatformPlugin"
+
+    private var binaryMessenger: BinaryMessenger? = null
+
+    private var channel: MethodChannel? = null
     private var messageChannel: EventChannel? = null
     private var messageUSBChannel: EventChannel? = null
     private var eventSink: EventChannel.EventSink? = null
@@ -54,6 +59,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
     private var isScan: Boolean = false
     lateinit var adapter: USBPrinterService
     private lateinit var bluetoothService: BluetoothService
+
 
 
     private val usbHandler = object : Handler(Looper.getMainLooper()) {
@@ -74,7 +80,6 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
             }
         }
     }
-
 
     private val bluetoothHandler = object : Handler(Looper.getMainLooper()) {
 
@@ -156,8 +161,16 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
 
     }
 
+
+
+    override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+        Log.d(TAG, "onAttachedToEngine")
+        binaryMessenger = flutterPluginBinding.binaryMessenger
+    }
+
     override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
-        channel.setMethodCallHandler(null)
+        Log.d(TAG, "onDetachedFromEngine")
+        channel?.setMethodCallHandler(null)
         messageChannel?.setStreamHandler(null)
         messageUSBChannel?.setStreamHandler(null)
 
@@ -168,11 +181,16 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
         adapter.setHandler(null)
     }
 
-    override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
-        channel = MethodChannel(flutterPluginBinding.binaryMessenger, methodChannel)
-        channel.setMethodCallHandler(this)
+    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        Log.d(TAG, "onAttachedToActivity")
 
-        messageChannel = EventChannel(flutterPluginBinding.binaryMessenger, eventChannelBT)
+        context = binding.activity.applicationContext
+        currentActivity = binding.activity
+
+        channel = MethodChannel(binaryMessenger!!, methodChannel)
+        channel!!.setMethodCallHandler(this)
+
+        messageChannel = EventChannel(binaryMessenger!!, eventChannelBT)
         messageChannel?.setStreamHandler(object : EventChannel.StreamHandler {
 
             override fun onListen(p0: Any?, sink: EventChannel.EventSink) {
@@ -184,7 +202,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
             }
         })
 
-        messageUSBChannel = EventChannel(flutterPluginBinding.binaryMessenger, eventChannelUSB)
+        messageUSBChannel = EventChannel(binaryMessenger!!, eventChannelUSB)
         messageUSBChannel?.setStreamHandler(object : EventChannel.StreamHandler {
 
             override fun onListen(p0: Any?, sink: EventChannel.EventSink) {
@@ -196,22 +214,46 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
             }
         })
 
-        context = flutterPluginBinding.applicationContext
         adapter = USBPrinterService.getInstance(usbHandler)
         adapter.init(context)
 
         bluetoothService = BluetoothService.getInstance(bluetoothHandler)
+
+        binding.addRequestPermissionsResultListener(this)
+        binding.addActivityResultListener(this)
+        bluetoothService.setActivity(currentActivity)
+    }
+
+    override fun onDetachedFromActivityForConfigChanges() {
+        Log.d(TAG, "onDetachedFromActivityForConfigChanges")
+        currentActivity = null
+        bluetoothService.setActivity(null)
+    }
+
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        Log.d(TAG, "onReattachedToActivityForConfigChanges")
+        currentActivity = binding.activity
+        binding.addRequestPermissionsResultListener(this)
+        binding.addActivityResultListener(this)
+        bluetoothService.setActivity(currentActivity)
+    }
+
+    override fun onDetachedFromActivity() {
+        Log.d(TAG, "onDetachedFromActivity")
+        currentActivity = null
+        bluetoothService.setActivity(null)
     }
 
     override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
         isScan = false
+        Log.d(TAG, "method call " + call.method.toString())
         when {
             call.method.equals("getBluetoothList") -> {
                 isBle = false
                 isScan = true
                 if (verifyIsBluetoothIsOn()) {
                     bluetoothService.cleanHandlerBtBle()
-                    bluetoothService.scanBluDevice(channel)
+                    bluetoothService.scanBluDevice(channel!!)
                     result.success(null)
                 }
             }
@@ -219,7 +261,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
                 isBle = true
                 isScan = true
                 if (verifyIsBluetoothIsOn()) {
-                    bluetoothService.scanBleDevice(channel)
+                    bluetoothService.scanBleDevice(channel!!)
                     result.success(null)
                 }
             }
@@ -269,7 +311,9 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
                 }
             }
             call.method.equals("getList") -> {
-                bluetoothService.cleanHandlerBtBle()
+                if (this::bluetoothService.isInitialized) {
+                    bluetoothService.cleanHandlerBtBle()
+                }
                 getUSBDeviceList(result)
             }
             call.method.equals("connectPrinter") -> {
@@ -298,12 +342,11 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
         }
     }
 
-    /**
-     *
-     */
-
     private fun verifyIsBluetoothIsOn(): Boolean {
         if (checkPermissions()) {
+            if (!this::bluetoothService.isInitialized){
+                bluetoothService = BluetoothService.getInstance(bluetoothHandler)
+            }
             if (!bluetoothService.mBluetoothAdapter.isEnabled) {
                 if (requestPermissionBT) return false
                 val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
@@ -316,8 +359,8 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
     }
 
     private fun getUSBDeviceList(result: Result) {
-        val usbDevices: List<UsbDevice> = adapter.deviceList
         val list = ArrayList<HashMap<*, *>>()
+        val usbDevices: List<UsbDevice> = adapter.deviceList
         for (usbDevice in usbDevices) {
             val deviceMap: HashMap<String?, String?> = HashMap()
             deviceMap["name"] = usbDevice.deviceName
@@ -362,7 +405,10 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
     }
 
     private fun printBytes(bytes: ArrayList<Int>?, result: Result) {
-        if (bytes == null) return
+        if (bytes == null) {
+            result.success(false)
+            return
+        }
         adapter.setHandler(usbHandler)
         adapter.printBytes(bytes)
         result.success(true)
@@ -381,6 +427,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
         }
 
         if (!hasPermissions(context, *permissions.toTypedArray())) {
+            Log.d(TAG, "")
             ActivityCompat.requestPermissions(currentActivity!!, permissions.toTypedArray(), PERMISSION_ALL)
             return false
         }
@@ -398,31 +445,6 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
         return true
     }
 
-
-    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
-        currentActivity = binding.activity
-        binding.addRequestPermissionsResultListener(this)
-        binding.addActivityResultListener(this)
-        bluetoothService.setActivity(currentActivity)
-    }
-
-    override fun onDetachedFromActivityForConfigChanges() {
-        currentActivity = null
-        bluetoothService.setActivity(null)
-    }
-
-    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
-        currentActivity = binding.activity
-        binding.addRequestPermissionsResultListener(this)
-        binding.addActivityResultListener(this)
-        bluetoothService.setActivity(currentActivity)
-    }
-
-    override fun onDetachedFromActivity() {
-        currentActivity = null
-        bluetoothService.setActivity(null)
-    }
-
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         when (requestCode) {
             PERMISSION_ENABLE_BLUETOOTH -> {
@@ -431,7 +453,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
                 Log.d(TAG, "PERMISSION_ENABLE_BLUETOOTH PERMISSION_GRANTED resultCode $resultCode")
                 if (resultCode == Activity.RESULT_OK)
                     if (isScan)
-                        if (isBle) bluetoothService.scanBleDevice(channel) else bluetoothService.scanBluDevice(channel)
+                        if (isBle) bluetoothService.scanBleDevice(channel!!) else bluetoothService.scanBluDevice(channel!!)
 
             }
         }
@@ -456,7 +478,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
                     Toast.makeText(context, R.string.not_permissions, Toast.LENGTH_LONG).show()
                 } else {
                     if (verifyIsBluetoothIsOn() && isScan)
-                        if (isBle) bluetoothService.scanBleDevice(channel) else bluetoothService.scanBluDevice(channel)
+                        if (isBle) bluetoothService.scanBleDevice(channel!!) else bluetoothService.scanBluDevice(channel!!)
                 }
                 return true
             }

@@ -1,6 +1,10 @@
 # flutter_pos_printer_platform
 
-[![Pub Version](https://img.shields.io/badge/pub-v1.1.1-green)](https://pub.dev/packages/flutter_pos_printer_platform_image_3)
+[![Pub Version](https://img.shields.io/badge/pub-v1.2.3-green)](https://pub.dev/packages/flutter_pos_printer_platform_image_3)
+
+Notice: This library was initially forked from [arthas1888](https://github.com/arthas1888/flutter_pos_printer_platform) in order to use it in a flutter project that use both image v4 and image v3 dart libraries. And since then, the library received many bug fixes after the original library was [discontinued](https://pub.dev/packages/flutter_pos_printer_platform).
+
+--------------------------
 
 A library to discover printers, and send printer commands.
 
@@ -172,9 +176,10 @@ info.plist add:
 - https://github.com/andrey-ushakov/esc_pos_utils
 - https://github.com/bailabs/esc-pos-printer-flutter
 - https://github.com/feedmepos/flutter_printer/tree/master/packages/flutter_pos_printer
+- https://pub.dev/packages/flutter_pos_printer_platform
 
 
-## Support me
+## Support Original Author
 
 If you think that this project has helped you with your developments, you can support this project, any support is much appreciated.
 

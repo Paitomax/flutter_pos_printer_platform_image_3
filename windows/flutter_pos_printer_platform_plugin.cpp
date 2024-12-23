@@ -1,4 +1,4 @@
-#include "include/flutter_pos_printer_platform/flutter_pos_printer_platform_plugin.h"
+#include "include/flutter_pos_printer_platform_image_3/flutter_pos_printer_platform_plugin.h"
 
 // This must be included before many other Windows headers.
 #include <windows.h>
