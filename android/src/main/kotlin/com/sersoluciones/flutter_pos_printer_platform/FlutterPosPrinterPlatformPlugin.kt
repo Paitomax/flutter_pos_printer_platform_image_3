@@ -16,107 +16,207 @@ import android.widget.Toast
 import androidx.annotation.NonNull
 import androidx.core.app.ActivityCompat
 import androidx.core.app.ActivityCompat.startActivityForResult
+import com.sersoluciones.flutter_pos_printer_platform.bluetooth.BluetoothConnection
 import com.sersoluciones.flutter_pos_printer_platform.bluetooth.BluetoothConstants
 import com.sersoluciones.flutter_pos_printer_platform.bluetooth.BluetoothService
+import com.sersoluciones.flutter_pos_printer_platform.bluetooth.BluetoothService.Companion.TAG
 import com.sersoluciones.flutter_pos_printer_platform.usb.USBPrinterService
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
-import io.flutter.plugin.common.*
+import io.flutter.plugin.common.EventChannel
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.MethodChannel.MethodCallHandler
+import io.flutter.plugin.common.MethodChannel.Result
+import io.flutter.plugin.common.PluginRegistry
+import io.flutter.plugin.common.BinaryMessenger
 
-class FlutterPosPrinterPlatformPlugin : FlutterPlugin,
-    MethodChannel.MethodCallHandler,
-    PluginRegistry.RequestPermissionsResultListener,
+/** FlutterPosPrinterPlatformPlugin */
+class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, PluginRegistry.RequestPermissionsResultListener,
     PluginRegistry.ActivityResultListener,
     ActivityAware {
+    /// The MethodChannel that will the communication between Flutter and native Android
+    ///
+    /// This local reference serves to register the plugin with the Flutter Engine and unregister it
+    /// when the Flutter Engine is detached from the Activity
 
-    private val TAG = "FlutterPosPrinterPlatformPlugin"
+    private final var TAG = "FlutterPosPrinterPlatformPlugin"
 
     private var binaryMessenger: BinaryMessenger? = null
-    private var channel: MethodChannel? = null
-    private var eventSink: EventChannel.EventSink? = null
-    private var eventUSBSink: EventChannel.EventSink? = null
 
+    private var channel: MethodChannel? = null
+    private var messageChannel: EventChannel? = null
+    private var messageUSBChannel: EventChannel? = null
+    private var eventSink: EventChannel.EventSink? = null
+
+    // Declare our eventSink later it will be initialized
+    private var eventUSBSink: EventChannel.EventSink? = null
     private var context: Context? = null
     private var currentActivity: Activity? = null
+    private var requestPermissionBT: Boolean = false
+    private var isBle: Boolean = false
+    private var isScan: Boolean = false
+    lateinit var adapter: USBPrinterService
+    private lateinit var bluetoothService: BluetoothService
 
-    private var adapter: USBPrinterService? = null
-    private var bluetoothService: BluetoothService? = null
 
-    private var isScan = false
-    private var isBle = false
-    private var requestPermissionBT = false
 
     private val usbHandler = object : Handler(Looper.getMainLooper()) {
-        override fun handleMessage(msg: Message) {
-            val sink = eventUSBSink ?: return
-            when (msg.what) {
-                USBPrinterService.STATE_USB_CONNECTED -> sink.success(2)
-                USBPrinterService.STATE_USB_CONNECTING -> sink.success(1)
-                USBPrinterService.STATE_USB_NONE -> sink.success(0)
-            }
-        }
-    }
 
-    private val bluetoothHandler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
-            val sink = eventSink ?: return
-            val status = BluetoothService.bluetoothConnection?.state ?: 99
+            super.handleMessage(msg)
             when (msg.what) {
-                BluetoothConstants.MESSAGE_STATE_CHANGE -> when (status) {
-                    BluetoothConstants.STATE_CONNECTED -> {
-                        Log.w(TAG, "BT CONNECTED")
-                        (msg.obj as? MethodChannel.Result)?.success(true)
-                        sink.success(2)
-                        bluetoothService?.removeReconnectHandlers()
-                    }
-                    BluetoothConstants.STATE_CONNECTING -> sink.success(1)
-                    BluetoothConstants.STATE_NONE -> {
-                        sink.success(0)
-                        bluetoothService?.autoConnectBt()
-                    }
-                    BluetoothConstants.STATE_FAILED -> {
-                        (msg.obj as? MethodChannel.Result)?.success(false)
-                        sink.success(0)
-                    }
+
+                USBPrinterService.STATE_USB_CONNECTED -> {
+                    eventUSBSink?.success(2)
+                }
+                USBPrinterService.STATE_USB_CONNECTING -> {
+                    eventUSBSink?.success(1)
+                }
+                USBPrinterService.STATE_USB_NONE -> {
+                    eventUSBSink?.success(0)
                 }
             }
         }
     }
 
-    // FlutterPlugin  ————————————————————————————————————————————————
-    override fun onAttachedToEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
-        binaryMessenger = binding.binaryMessenger
+    private val bluetoothHandler = object : Handler(Looper.getMainLooper()) {
+
+        private val bluetoothStatus: Int
+            get() = BluetoothService.bluetoothConnection?.state ?: 99
+
+        override fun handleMessage(msg: Message) {
+            super.handleMessage(msg)
+            when (msg.what) {
+                BluetoothConstants.MESSAGE_STATE_CHANGE -> {
+                    when (bluetoothStatus) {
+                        BluetoothConstants.STATE_CONNECTED -> {
+                            Log.w(TAG, " -------------------------- connection BT STATE_CONNECTED ")
+                            if (msg.obj != null)
+                                try {
+                                    val result = msg.obj as Result?
+                                    result?.success(true)
+                                } catch (e: Exception) {
+                                }
+                            eventSink?.success(2)
+                            bluetoothService.removeReconnectHandlers()
+                        }
+                        BluetoothConstants.STATE_CONNECTING -> {
+                            Log.w(TAG, " -------------------------- connection BT STATE_CONNECTING ")
+                            eventSink?.success(1)
+                        }
+                        BluetoothConstants.STATE_NONE -> {
+                            Log.w(TAG, " -------------------------- connection BT STATE_NONE ")
+                            eventSink?.success(0)
+                            bluetoothService.autoConnectBt()
+
+                        }
+                        BluetoothConstants.STATE_FAILED -> {
+                            Log.w(TAG, " -------------------------- connection BT STATE_FAILED ")
+                            if (msg.obj != null)
+                                try {
+                                    val result = msg.obj as Result?
+                                    result?.success(false)
+                                } catch (e: Exception) {
+                                }
+                            eventSink?.success(0)
+                        }
+                    }
+                }
+                BluetoothConstants.MESSAGE_WRITE -> {
+//                val readBuf = msg.obj as ByteArray
+//                Log.d("bluetooth", "envia bt: ${String(readBuf)}")
+                }
+                BluetoothConstants.MESSAGE_READ -> {
+                    val readBuf = msg.obj as ByteArray
+                    var readMessage = String(readBuf, 0, msg.arg1)
+                    readMessage = readMessage.trim { it <= ' ' }
+                    Log.d("bluetooth", "receive bt: $readMessage")
+                }
+                BluetoothConstants.MESSAGE_DEVICE_NAME -> {
+                    val deviceName = msg.data.getString(BluetoothConstants.DEVICE_NAME)
+                    Log.d("bluetooth", " ------------- deviceName $deviceName -----------------")
+                }
+
+                BluetoothConstants.MESSAGE_TOAST -> {
+                    val bundle = msg.data
+                    bundle?.getInt(BluetoothConnection.TOAST)?.let {
+                        Toast.makeText(context, context!!.getString(it), Toast.LENGTH_SHORT).show()
+                    }
+                }
+                BluetoothConstants.MESSAGE_START_SCANNING -> {
+
+                }
+
+                BluetoothConstants.MESSAGE_STOP_SCANNING -> {
+
+                }
+                99 -> {
+
+                }
+
+            }
+        }
+
+    }
+
+
+
+    override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+        Log.d(TAG, "onAttachedToEngine")
+        binaryMessenger = flutterPluginBinding.binaryMessenger
     }
 
     override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+        Log.d(TAG, "onDetachedFromEngine")
         channel?.setMethodCallHandler(null)
-        eventSink = null
-        eventUSBSink = null
-        bluetoothService?.setHandler(null)
-        adapter?.setHandler(null)
+        messageChannel?.setStreamHandler(null)
+        messageUSBChannel?.setStreamHandler(null)
+
+        messageChannel = null
+        messageUSBChannel = null
+
+        bluetoothService.setHandler(null)
+        adapter.setHandler(null)
     }
 
-    // ActivityAware  ——————————————————————————————————————————————
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
-        val ctx = binding.activity.applicationContext
-        context = ctx
+        Log.d(TAG, "onAttachedToActivity")
+
+        context = binding.activity.applicationContext
         currentActivity = binding.activity
 
-        channel = MethodChannel(binaryMessenger!!, methodChannel).apply {
-            setMethodCallHandler(this@FlutterPosPrinterPlatformPlugin)
-        }
+        channel = MethodChannel(binaryMessenger!!, methodChannel)
+        channel!!.setMethodCallHandler(this)
 
-        EventChannel(binaryMessenger!!, eventChannelBT).setStreamHandler(object: EventChannel.StreamHandler {
-            override fun onListen(args: Any?, sink: EventChannel.EventSink) { eventSink = sink }
-            override fun onCancel(args: Any?) { eventSink = null }
-        })
-        EventChannel(binaryMessenger!!, eventChannelUSB).setStreamHandler(object: EventChannel.StreamHandler {
-            override fun onListen(args: Any?, sink: EventChannel.EventSink) { eventUSBSink = sink }
-            override fun onCancel(args: Any?) { eventUSBSink = null }
+        messageChannel = EventChannel(binaryMessenger!!, eventChannelBT)
+        messageChannel?.setStreamHandler(object : EventChannel.StreamHandler {
+
+            override fun onListen(p0: Any?, sink: EventChannel.EventSink) {
+                eventSink = sink
+            }
+
+            override fun onCancel(p0: Any?) {
+                eventSink = null
+            }
         })
 
-        adapter = USBPrinterService.getInstance(usbHandler).apply { init(ctx) }
+        messageUSBChannel = EventChannel(binaryMessenger!!, eventChannelUSB)
+        messageUSBChannel?.setStreamHandler(object : EventChannel.StreamHandler {
+
+            override fun onListen(p0: Any?, sink: EventChannel.EventSink) {
+                eventUSBSink = sink
+            }
+
+            override fun onCancel(p0: Any?) {
+                eventUSBSink = null
+            }
+        })
+
+        adapter = USBPrinterService.getInstance(usbHandler)
+        adapter.init(context)
+
         bluetoothService = BluetoothService.getInstance(bluetoothHandler)
 
         binding.addRequestPermissionsResultListener(this)
@@ -125,38 +225,260 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin,
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
+        Log.d(TAG, "onDetachedFromActivityForConfigChanges")
         currentActivity = null
         bluetoothService.setActivity(null)
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        Log.d(TAG, "onReattachedToActivityForConfigChanges")
         currentActivity = binding.activity
-        bluetoothService.setActivity(currentActivity)
         binding.addRequestPermissionsResultListener(this)
         binding.addActivityResultListener(this)
+        bluetoothService.setActivity(currentActivity)
     }
 
     override fun onDetachedFromActivity() {
+        Log.d(TAG, "onDetachedFromActivity")
         currentActivity = null
         bluetoothService.setActivity(null)
     }
 
-    // PermissionsResultListener —————————————————————————————————————————
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ): Boolean {
-        Log.d(TAG, "onRequestPermissionsResult: $requestCode")
+    override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
+        isScan = false
+        Log.d(TAG, "method call " + call.method.toString())
+        when {
+            call.method.equals("getBluetoothList") -> {
+                isBle = false
+                isScan = true
+                if (verifyIsBluetoothIsOn()) {
+                    bluetoothService.cleanHandlerBtBle()
+                    bluetoothService.scanBluDevice(channel!!)
+                    result.success(null)
+                }
+            }
+            call.method.equals("getBluetoothLeList") -> {
+                isBle = true
+                isScan = true
+                if (verifyIsBluetoothIsOn()) {
+                    bluetoothService.scanBleDevice(channel!!)
+                    result.success(null)
+                }
+            }
+
+            call.method.equals("onStartConnection") -> {
+                val address: String? = call.argument("address")
+                val isBle: Boolean? = call.argument("isBle")
+                val autoConnect: Boolean = if (call.hasArgument("autoConnect")) call.argument("autoConnect")!! else false
+                if (verifyIsBluetoothIsOn()) {
+                    bluetoothService.setHandler(bluetoothHandler)
+                    bluetoothService.onStartConnection(context!!, address!!, result, isBle = isBle!!, autoConnect = autoConnect)
+                } else {
+                    result.success(false)
+                }
+            }
+
+            call.method.equals("disconnect") -> {
+                try {
+                    bluetoothService.setHandler(bluetoothHandler)
+                    bluetoothService.bluetoothDisconnect()
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.success(false)
+                }
+
+            }
+
+            call.method.equals("sendDataByte") -> {
+                if (verifyIsBluetoothIsOn()) {
+                    bluetoothService.setHandler(bluetoothHandler)
+                    val listInt: ArrayList<Int>? = call.argument("bytes")
+                    val ints = listInt!!.toIntArray()
+                    val bytes = ints.foldIndexed(ByteArray(ints.size)) { i, a, v -> a.apply { set(i, v.toByte()) } }
+                    val res = bluetoothService.sendDataByte(bytes)
+                    result.success(res)
+                } else {
+                    result.success(false)
+                }
+            }
+            call.method.equals("sendText") -> {
+                if (verifyIsBluetoothIsOn()) {
+                    val text: String? = call.argument("text")
+                    bluetoothService.sendData(text!!)
+                    result.success(true)
+                } else {
+                    result.success(false)
+                }
+            }
+            call.method.equals("getList") -> {
+                if (this::bluetoothService.isInitialized) {
+                    bluetoothService.cleanHandlerBtBle()
+                }
+                getUSBDeviceList(result)
+            }
+            call.method.equals("connectPrinter") -> {
+                val vendor: Int? = call.argument("vendor")
+                val product: Int? = call.argument("product")
+                connectPrinter(vendor, product, result)
+            }
+            call.method.equals("close") -> {
+                closeConn(result)
+            }
+            call.method.equals("printText") -> {
+                val text: String? = call.argument("text")
+                printText(text, result)
+            }
+            call.method.equals("printRawData") -> {
+                val raw: String? = call.argument("raw")
+                printRawData(raw, result)
+            }
+            call.method.equals("printBytes") -> {
+                val bytes: ArrayList<Int>? = call.argument("bytes")
+                printBytes(bytes, result)
+            }
+            else -> {
+                result.notImplemented()
+            }
+        }
+    }
+
+    private fun verifyIsBluetoothIsOn(): Boolean {
+        if (checkPermissions()) {
+            if (!this::bluetoothService.isInitialized){
+                bluetoothService = BluetoothService.getInstance(bluetoothHandler)
+            }
+            if (!bluetoothService.mBluetoothAdapter.isEnabled) {
+                if (requestPermissionBT) return false
+                val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                currentActivity?.let { startActivityForResult(it, enableBtIntent, PERMISSION_ENABLE_BLUETOOTH, null) }
+                requestPermissionBT = true
+                return false
+            }
+        } else return false
+        return true
+    }
+
+    private fun getUSBDeviceList(result: Result) {
+        val list = ArrayList<HashMap<*, *>>()
+        val usbDevices: List<UsbDevice> = adapter.deviceList
+        for (usbDevice in usbDevices) {
+            val deviceMap: HashMap<String?, String?> = HashMap()
+            deviceMap["name"] = usbDevice.deviceName
+            deviceMap["manufacturer"] = usbDevice.manufacturerName
+            deviceMap["product"] = usbDevice.productName
+            deviceMap["deviceId"] = usbDevice.deviceId.toString()
+            deviceMap["vendorId"] = usbDevice.vendorId.toString()
+            deviceMap["productId"] = usbDevice.productId.toString()
+            list.add(deviceMap)
+        }
+        result.success(list)
+    }
+
+    private fun connectPrinter(vendorId: Int?, productId: Int?, result: Result) {
+        if (vendorId == null || productId == null) return
+        adapter.setHandler(usbHandler)
+        if (!adapter.selectDevice(vendorId, productId)) {
+            result.success(false)
+        } else {
+            result.success(true)
+        }
+    }
+
+    private fun closeConn(result: Result) {
+        adapter.setHandler(usbHandler)
+        adapter.closeConnectionIfExists()
+        result.success(true)
+    }
+
+    private fun printText(text: String?, result: Result) {
+        if (text.isNullOrEmpty()) return
+        adapter.setHandler(usbHandler)
+        adapter.printText(text)
+        result.success(true)
+    }
+
+    private fun printRawData(base64Data: String?, result: Result) {
+        if (base64Data.isNullOrEmpty()) return
+        adapter.setHandler(usbHandler)
+        adapter.printRawData(base64Data)
+        result.success(true)
+    }
+
+    private fun printBytes(bytes: ArrayList<Int>?, result: Result) {
+        if (bytes == null) {
+            result.success(false)
+            return
+        }
+        adapter.setHandler(usbHandler)
+        adapter.printBytes(bytes)
+        result.success(true)
+    }
+
+    private fun checkPermissions(): Boolean {
+        val permissions = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+//            Manifest.permission.BLUETOOTH,
+//            Manifest.permission.BLUETOOTH_ADMIN,
+        )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+
+        if (!hasPermissions(context, *permissions.toTypedArray())) {
+            Log.d(TAG, "")
+            ActivityCompat.requestPermissions(currentActivity!!, permissions.toTypedArray(), PERMISSION_ALL)
+            return false
+        }
+        return true
+    }
+
+    private fun hasPermissions(context: Context?, vararg permissions: String?): Boolean {
+        if (context != null) {
+            for (permission in permissions) {
+                if (ActivityCompat.checkSelfPermission(context, permission!!) != PackageManager.PERMISSION_GRANTED) {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         when (requestCode) {
+            PERMISSION_ENABLE_BLUETOOTH -> {
+                requestPermissionBT = false
+
+                Log.d(TAG, "PERMISSION_ENABLE_BLUETOOTH PERMISSION_GRANTED resultCode $resultCode")
+                if (resultCode == Activity.RESULT_OK)
+                    if (isScan)
+                        if (isBle) bluetoothService.scanBleDevice(channel!!) else bluetoothService.scanBluDevice(channel!!)
+
+            }
+        }
+        return true
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray): Boolean {
+        Log.d(TAG, " --- requestCode $requestCode")
+        when (requestCode) {
+
             PERMISSION_ALL -> {
-                val allGranted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-                val ctx = context ?: return false
-                if (!allGranted) {
-                    Toast.makeText(ctx, R.string.not_permissions, Toast.LENGTH_LONG).show()
-                } else if (isScan) {
-                    if (isBle) bluetoothService?.scanBleDevice(channel!!)
-                    else bluetoothService?.scanBluDevice(channel!!)
+                var grant = true
+                grantResults.forEach { permission ->
+
+                    val permissionGranted = grantResults.isNotEmpty() &&
+                            permission == PackageManager.PERMISSION_GRANTED
+                    Log.d(TAG, " --- requestCode $requestCode permission $permission permissionGranted $permissionGranted")
+                    if (!permissionGranted) grant = false
+
+                }
+                if (!grant) {
+                    Toast.makeText(context, R.string.not_permissions, Toast.LENGTH_LONG).show()
+                } else {
+                    if (verifyIsBluetoothIsOn() && isScan)
+                        if (isBle) bluetoothService.scanBleDevice(channel!!) else bluetoothService.scanBluDevice(channel!!)
                 }
                 return true
             }
@@ -164,110 +486,12 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin,
         return false
     }
 
-    // ActivityResultListener ———————————————————————————————————————————
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
-        if (requestCode == PERMISSION_ENABLE_BLUETOOTH) {
-            requestPermissionBT = false
-            if (resultCode == Activity.RESULT_OK && isScan) {
-                if (isBle) bluetoothService?.scanBleDevice(channel!!)
-                else bluetoothService?.scanBluDevice(channel!!)
-            }
-        }
-        return true
-    }
-
-    // MethodCallHandler ———————————————————————————————————————————————
-    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        isScan = false
-        when (call.method) {
-            "getBluetoothList"     -> startBluetoothScan(result, false)
-            "getBluetoothLeList"   -> startBluetoothScan(result, true)
-            "onStartConnection"    -> startBluetoothConnection(call, result)
-            "disconnect"           -> { bluetoothService?.bluetoothDisconnect(); result.success(true) }
-            "sendDataByte"         -> {
-                val list = call.argument<ArrayList<Int>>("bytes") ?: arrayListOf()
-                val byteArray = list.map { it.toByte() }.toByteArray()
-                result.success(bluetoothService?.sendDataByte(byteArray))
-            }
-            "sendText"             -> {
-                call.argument<String>("text")?.let {
-                    bluetoothService?.sendData(it)
-                }
-                result.success(true)
-            }
-            "getList"              -> getUSBDeviceList(result)
-            "connectPrinter"       -> connectPrinter(call, result)
-            "close"                -> { adapter?.closeConnectionIfExists(); result.success(true) }
-            "printText"            -> {
-                call.argument<String>("text")?.let {
-                    adapter?.printText(it)
-                }
-                result.success(true)
-            }
-            "printRawData"         -> {
-                call.argument<String>("raw")?.let {
-                    adapter?.printRawData(it)
-                }
-                result.success(true)
-            }
-            "printBytes"           -> {
-                val bytes = call.argument<ArrayList<Int>>("bytes") ?: arrayListOf()
-                result.success(adapter?.printBytes(bytes))
-            }
-            else                   -> result.notImplemented()
-        }
-    }
-
-    // ———————————————————————————————————————————————— Helper Metotlar ————————————————————————————————————————————————
-    private fun startBluetoothScan(result: MethodChannel.Result, ble: Boolean) {
-        isBle = ble; isScan = true
-        if (verifyIsBluetoothIsOn()) {
-            bluetoothService?.setHandler(bluetoothHandler)
-            if (ble) bluetoothService?.scanBleDevice(channel!!)
-            else    bluetoothService?.scanBluDevice(channel!!)
-            result.success(null)
-        } else result.success(null)
-    }
-
-    private fun startBluetoothConnection(call: MethodCall, result: MethodChannel.Result) {
-        val address = call.argument<String>("address") ?: return result.success(false)
-        val ble     = call.argument<Boolean>("isBle") ?: false
-        val auto    = call.argument<Boolean>("autoConnect") ?: false
-        if (verifyIsBluetoothIsOn()) {
-            bluetoothService?.setHandler(bluetoothHandler)
-            bluetoothService?.onStartConnection(currentActivity!!, address, result, ble, auto)
-        } else result.success(false)
-    }
-
-    private fun getUSBDeviceList(result: MethodChannel.Result) {
-        val list = adapter?.deviceList
-            ?.map { usb ->
-                mapOf(
-                    "name"        to usb.deviceName,
-                    "manufacturer" to usb.manufacturerName,
-                    "product"     to usb.productName,
-                    "deviceId"    to usb.deviceId.toString(),
-                    "vendorId"    to usb.vendorId.toString(),
-                    "productId"   to usb.productId.toString()
-                )
-            } ?: emptyList()
-        result.success(list)
-    }
-
-    private fun connectPrinter(call: MethodCall, result: MethodChannel.Result) {
-        val vendor  = call.argument<Int>("vendor")  ?: return result.success(false)
-        val product = call.argument<Int>("product") ?: return result.success(false)
-        adapter?.setHandler(usbHandler)
-        result.success(adapter?.selectDevice(vendor, product) ?: false)
-    }
-
-    // … geri kalan (verifyIsBluetoothIsOn, checkPermissions, vs.) olduğu gibi kalır …
-
     companion object {
         const val PERMISSION_ALL = 1
         const val PERMISSION_ENABLE_BLUETOOTH = 999
-        const val methodChannel    = "com.sersoluciones.flutter_pos_printer_platform"
-        const val eventChannelBT   = "$methodChannel/bt_state"
-        const val eventChannelUSB  = "$methodChannel/usb_state"
+        const val methodChannel = "com.sersoluciones.flutter_pos_printer_platform"
+        const val eventChannelBT = "com.sersoluciones.flutter_pos_printer_platform/bt_state"
+        const val eventChannelUSB = "com.sersoluciones.flutter_pos_printer_platform/usb_state"
+
     }
 }
