@@ -24,10 +24,11 @@ class EscPosPrinter<T> extends GenericPrinter<T> {
     final decodedImage = img.decodeImage(image)!;
 
     final converted = toPixel(
-        ImageData(width: decodedImage.width, height: decodedImage.height),
-        paperWidth: width,
-        dpi: dpi,
-        isTspl: false);
+      ImageData(width: decodedImage.width, height: decodedImage.height),
+      paperWidth: width,
+      dpi: dpi,
+      isTspl: false,
+    );
 
     // final resizedImage = copyResize(decodedImage, width: converted.width, height: converted.height, interpolation: Interpolation.cubic);
 
