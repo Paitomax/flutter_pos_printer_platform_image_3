@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="fail_connect_bt">Não foi possível estabelecer ligação Bluetooth</string>
-    <string name="lost_connection_bt">Ligação Bluetooth perdida</string>
+    <string name="lost_connection_bt">Ligação Bluetooth finalizada</string>
     <string name="not_permissions">É necessário aceitar todas as permissões para a aplicação funcionar</string>
     <string name="fail_write_data">Não foi possível enviar dados para o outro dispositivo</string>
     <string name="user_refuse_perm">O utilizador recusou a permissão para o dispositivo USB</string>
