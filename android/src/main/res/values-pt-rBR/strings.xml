@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fail_connect_bt">Não foi possível estabelecer conexão Bluetooth</string>
+    <string name="lost_connection_bt">Conexão Bluetooth perdida</string>
+    <string name="not_permissions">É necessário aceitar todas as permissões para o app funcionar</string>
+    <string name="fail_write_data">Não foi possível enviar dados para o outro dispositivo</string>
+    <string name="user_refuse_perm">O usuário recusou a permissão para o dispositivo USB</string>
+    <string name="device_off">O dispositivo USB foi desligado</string>
+    <string name="not_usb_manager">Gerenciador USB não está inicializado ao tentar obter a lista de dispositivos</string>
+    <string name="connected_device">Dispositivo conectado</string>
+</resources>
