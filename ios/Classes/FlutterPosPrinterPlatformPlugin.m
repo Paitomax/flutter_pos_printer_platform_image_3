@@ -77,32 +77,66 @@
     NSDictionary *device = [call arguments];
     @try {
       NSLog(@"connect device begin -> %@", [device objectForKey:@"name"]);
-      CBPeripheral *peripheral = [_scannedPeripherals objectForKey:[device objectForKey:@"address"]];
-        
+      NSString *address = [device objectForKey:@"address"];
+      CBPeripheral *peripheral = address ? [_scannedPeripherals objectForKey:address] : nil;
+
+      if (peripheral == nil) {
+        NSLog(@"[FlutterPosPrinterPlatformPlugin] Peripheral not found for address: %@", address);
+        result([FlutterError errorWithCode:@"DEVICE_NOT_FOUND"
+                                   message:@"Bluetooth device not found. Please scan again."
+                                   details:address]);
+        return;
+      }
+
+      __weak typeof(self) weakSelf = self;
       self.state = ^(ConnectState state) {
-        [self updateConnectState:state];
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf) {
+          [strongSelf updateConnectState:state];
+        }
       };
-      [Manager connectPeripheral:peripheral options:nil timeout:2 connectBlack: self.state];
-      
+      [Manager connectPeripheral:peripheral options:nil timeout:5 connectBlack:self.state];
+
       result(nil);
-    } @catch(FlutterError *e) {
-      result(e);
+    } @catch(NSException *e) {
+      NSLog(@"[FlutterPosPrinterPlatformPlugin] connect exception: %@", e);
+      result([FlutterError errorWithCode:@"CONNECT_ERROR"
+                                 message:e.reason ?: @"Unknown connection error"
+                                 details:nil]);
     }
   } else if([@"disconnect" isEqualToString:call.method]) {
     @try {
       [Manager close];
       result(nil);
-    } @catch(FlutterError *e) {
-      result(e);
+    } @catch(NSException *e) {
+      NSLog(@"[FlutterPosPrinterPlatformPlugin] disconnect exception: %@", e);
+      result([FlutterError errorWithCode:@"DISCONNECT_ERROR"
+                                 message:e.reason ?: @"Unknown disconnect error"
+                                 details:nil]);
     }
   } else if([@"writeData" isEqualToString:call.method]) {
        @try {
            NSDictionary *args = [call arguments];
            
+           if (Manager.connecter == nil) {
+               result([FlutterError errorWithCode:@"NOT_CONNECTED"
+                                          message:@"Printer is not connected"
+                                          details:nil]);
+               return;
+           }
+
            NSMutableArray *bytes = [args objectForKey:@"bytes"];
 
            NSNumber* lenBuf = [args objectForKey:@"length"];
            int len = [lenBuf intValue];
+
+           if (len <= 0 || bytes == nil) {
+               result([FlutterError errorWithCode:@"INVALID_DATA"
+                                          message:@"Invalid data to write"
+                                          details:nil]);
+               return;
+           }
+
            char cArray[len];
 
            for (int i = 0; i < len; ++i) {
@@ -113,21 +147,27 @@
 //           NSLog(@"bytes in hex: %@", [data2 description]);
            [Manager write:data2];
            result(nil);
-       } @catch(FlutterError *e) {
-           result(e);
+       } @catch(NSException *e) {
+           NSLog(@"[FlutterPosPrinterPlatformPlugin] writeData exception: %@", e);
+           result([FlutterError errorWithCode:@"WRITE_ERROR"
+                                      message:e.reason ?: @"Unknown write error"
+                                      details:nil]);
        }
   }
 }
 
 -(void)startScan {
     [Manager scanForPeripheralsWithServices:nil options:nil discover:^(CBPeripheral * _Nullable peripheral, NSDictionary<NSString *,id> * _Nullable advertisementData, NSNumber * _Nullable RSSI) {
-        if (peripheral.name != nil) {
-            
+        if (peripheral != nil && peripheral.name != nil && peripheral.name.length > 0) {
+
             NSLog(@"find device -> %@", peripheral.name);
             [self.scannedPeripherals setObject:peripheral forKey:[[peripheral identifier] UUIDString]];
             
             NSDictionary *device = [NSDictionary dictionaryWithObjectsAndKeys:peripheral.identifier.UUIDString,@"address",peripheral.name,@"name",nil,@"type",nil];
-            [_channel invokeMethod:@"ScanResult" arguments:device];
+
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self->_channel invokeMethod:@"ScanResult" arguments:device];
+            });
         }
     }];
     

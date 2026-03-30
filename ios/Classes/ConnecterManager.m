@@ -30,6 +30,10 @@ static dispatch_once_t once;
  *  @param discover 发现的设备
  */
 -(void)scanForPeripheralsWithServices:(nullable NSArray<CBUUID *> *)serviceUUIDs options:(nullable NSDictionary<NSString *, id> *)options discover:(void(^_Nullable)(CBPeripheral *_Nullable peripheral,NSDictionary<NSString *, id> *_Nullable advertisementData,NSNumber *_Nullable RSSI))discover{
+    if (_bleConnecter == nil) {
+        NSLog(@"[ConnecterManager] scanForPeripherals called but bleConnecter is nil");
+        return;
+    }
     [_bleConnecter scanForPeripheralsWithServices:serviceUUIDs options:options discover:discover];
 }
 
@@ -60,6 +64,7 @@ static dispatch_once_t once;
  *  方法说明：停止扫描
  */
 -(void)stopScan {
+    if (_bleConnecter == nil) return;
     [_bleConnecter stopScan];
 }
 
@@ -67,14 +72,32 @@ static dispatch_once_t once;
  *  连接
  */
 -(void)connectPeripheral:(CBPeripheral *)peripheral options:(nullable NSDictionary<NSString *,id> *)options timeout:(NSUInteger)timeout connectBlack:(void(^_Nullable)(ConnectState state)) connectState{
+    if (_bleConnecter == nil) {
+        NSLog(@"[ConnecterManager] connectPeripheral called but bleConnecter is nil");
+        if (connectState) connectState(CONNECT_STATE_FAILT);
+        return;
+    }
+    if (peripheral == nil) {
+        NSLog(@"[ConnecterManager] connectPeripheral called with nil peripheral");
+        if (connectState) connectState(CONNECT_STATE_FAILT);
+        return;
+    }
     [_bleConnecter connectPeripheral:peripheral options:options timeout:timeout connectBlack:connectState];
 }
 
 -(void)connectPeripheral:(CBPeripheral * _Nullable)peripheral options:(nullable NSDictionary<NSString *,id> *)options {
+    if (_bleConnecter == nil || peripheral == nil) {
+        NSLog(@"[ConnecterManager] connectPeripheral called with nil bleConnecter or peripheral");
+        return;
+    }
     [_bleConnecter connectPeripheral:peripheral options:options];
 }
 
 -(void)write:(NSData *_Nullable)data progress:(void(^_Nullable)(NSUInteger total,NSUInteger progress))progress receCallBack:(void (^_Nullable)(NSData *_Nullable))callBack {
+    if (_bleConnecter == nil || data == nil) {
+        NSLog(@"[ConnecterManager] write:progress:receCallBack: called with nil bleConnecter or data");
+        return;
+    }
     [_bleConnecter write:data progress:progress receCallBack:callBack];
 }
 
@@ -82,6 +105,10 @@ static dispatch_once_t once;
 #ifdef DEBUG
     NSLog(@"[ConnecterManager] write:receCallBack:");
 #endif
+    if (_connecter == nil || data == nil) {
+        NSLog(@"[ConnecterManager] write:receCallBack: called with nil connecter or data");
+        return;
+    }
     _bleConnecter.writeProgress = nil;
     [_connecter write:data receCallBack:callBack];
 }
@@ -90,19 +117,30 @@ static dispatch_once_t once;
 #ifdef DEBUG
     NSLog(@"[ConnecterManager] write:");
 #endif
+    if (_connecter == nil || data == nil) {
+        NSLog(@"[ConnecterManager] write: called with nil connecter or data");
+        return;
+    }
     _bleConnecter.writeProgress = nil;
     [_connecter write:data];
 }
 
 -(void)close {
-    if (_connecter) {
-        [_connecter close];
+    @try {
+        if (_connecter) {
+            [_connecter close];
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[ConnecterManager] close exception: %@", e);
     }
     switch (currentConnMethod) {
         case BLUETOOTH:
             _bleConnecter = nil;
             break;
+        default:
+            break;
     }
+    _connecter = nil;
 }
 
 @end

@@ -242,12 +242,13 @@ class BluetoothPrinterConnector implements PrinterConnector<BluetoothPrinterInpu
         Map<String, Object> args = Map();
         args['bytes'] = bytes;
         args['length'] = bytes.length;
-        iosChannel.invokeMethod('writeData', args);
-        return Future.value(true);
+        await iosChannel.invokeMethod('writeData', args);
+        return true;
       } else {
         return false;
       }
     } catch (e) {
+      print('[BluetoothPrinterConnector] send error: $e');
       return false;
     }
   }
