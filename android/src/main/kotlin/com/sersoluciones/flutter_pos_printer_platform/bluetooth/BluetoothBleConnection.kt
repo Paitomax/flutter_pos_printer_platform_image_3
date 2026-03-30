@@ -94,9 +94,18 @@ class BluetoothBleConnection(
      */
     override fun stop() {
         bluetoothGatt?.let { gatt ->
-            gatt.disconnect()
-            gatt.close()
+            try {
+                gatt.disconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error disconnecting GATT", e)
+            }
+            try {
+                gatt.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing GATT", e)
+            }
             bluetoothGatt = null
+            mCharacteristic = null
             state = BluetoothConstants.STATE_NONE
         }
     }
@@ -134,6 +143,27 @@ class BluetoothBleConnection(
 
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             Log.d(TAG, " ---------- onConnectionStateChange: newState $newState status $status")
+
+            // Handle GATT errors (e.g., status 133, 8, 19 — common when another app disconnects the device)
+            if (status != BluetoothGatt.GATT_SUCCESS && newState != BluetoothProfile.STATE_CONNECTED) {
+                Log.w(TAG, "GATT error status: $status, closing GATT to release resources")
+                try {
+                    gatt.close()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error closing GATT after error status", e)
+                }
+                bluetoothGatt = null
+                mCharacteristic = null
+
+                if (mmChannelResult != null) {
+                    state = BluetoothConstants.STATE_FAILED
+                    mHandler.obtainMessage(BluetoothConstants.MESSAGE_STATE_CHANGE, state, -1, result).sendToTarget()
+                    mmChannelResult = null
+                }
+                state = BluetoothConstants.STATE_NONE
+                return
+            }
+
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     // successfully connected to the GATT Server
@@ -158,6 +188,16 @@ class BluetoothBleConnection(
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.d(TAG, "onConnectionStateChange: STATE_DISCONNECTED")
+
+                    // Always close GATT on disconnect to release resources
+                    try {
+                        gatt.close()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error closing GATT on disconnect", e)
+                    }
+                    bluetoothGatt = null
+                    mCharacteristic = null
+
                     if (mmChannelResult != null) {
                         // disconnected from the GATT Server
                         state = BluetoothConstants.STATE_FAILED

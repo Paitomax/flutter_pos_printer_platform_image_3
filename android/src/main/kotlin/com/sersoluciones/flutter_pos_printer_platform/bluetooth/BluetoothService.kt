@@ -22,6 +22,31 @@ class BluetoothService(private var bluetoothHandler: Handler?) {
     private val mHandlerAutoConnect = Handler(Looper.getMainLooper())
     private var reconnectBluetooth = false
     private var result: Result? = null
+    private var retryCount = 0
+    private var isBleConnection = false
+    private var autoConnectEnabled = false
+
+    companion object {
+
+        private var mInstance: BluetoothService? = null
+        var bluetoothConnection: IBluetoothConnection? = null
+
+        private const val MAX_RETRY_COUNT = 5
+        private const val BASE_RETRY_DELAY_MS = 2000L
+
+        fun getInstance(bluetoothHandler: Handler): BluetoothService {
+            if (mInstance == null) {
+                mInstance = BluetoothService(bluetoothHandler)
+            }
+            return mInstance!!
+        }
+
+        // Stops scanning after 4 seconds.
+        private const val SCAN_PERIOD: Long = 4 * 1000
+
+
+        const val TAG = "BluetoothPrinter"
+    }
 
     val mBluetoothAdapter: BluetoothAdapter by lazy {
         BluetoothAdapter.getDefaultAdapter()
@@ -150,7 +175,13 @@ class BluetoothService(private var bluetoothHandler: Handler?) {
     }
 
     fun bluetoothDisconnect() {
-        bluetoothConnection?.stop()
+        retryCount = 0
+        reconnectBluetooth = false
+        try {
+            bluetoothConnection?.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during bluetooth disconnect", e)
+        }
         bluetoothConnection = null
 
         mHandlerAutoConnect.removeCallbacks(reconnect)
@@ -158,37 +189,94 @@ class BluetoothService(private var bluetoothHandler: Handler?) {
 
 
     fun onStartConnection(context: Context, address: String?, result: Result, isBle: Boolean = false, autoConnect: Boolean = false) {
-        if (bluetoothConnection == null)
+        // If there's an existing connection in an inconsistent state, force-clean it
+        if (bluetoothConnection != null) {
+            val currentState = bluetoothConnection!!.state
+            if (currentState != BluetoothConstants.STATE_NONE && currentState != BluetoothConstants.STATE_CONNECTED) {
+                Log.w(TAG, "Connection in inconsistent state ($currentState), force-cleaning before reconnect")
+                try {
+                    bluetoothConnection?.stop()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error stopping stale connection", e)
+                }
+                bluetoothConnection = null
+            }
+        }
+
+        if (bluetoothConnection == null) {
+            retryCount = 0
             bluetoothConnection =
                 if (isBle) BluetoothBleConnection(mContext = context, bluetoothHandler!!, autoConnect = autoConnect)
                 else BluetoothConnection(bluetoothHandler!!)
+        }
+
         this.result = result
+        this.isBleConnection = isBle
+        this.autoConnectEnabled = autoConnect
         reconnectBluetooth = bluetoothConnection is BluetoothConnection && autoConnect
         mConnectedDeviceAddress = address
+
         if ("" != address && bluetoothConnection!!.state == BluetoothConstants.STATE_NONE) {
-//            Log.d(TAG, " ------------- mac Address BT: $address")
             bluetoothConnect(address, result)
         } else if (bluetoothConnection!!.state == BluetoothConstants.STATE_CONNECTED) {
             result.success(true)
             bluetoothHandler?.obtainMessage(BluetoothConstants.MESSAGE_STATE_CHANGE, bluetoothConnection!!.state, -1)?.sendToTarget()
         } else {
-            result.success(false)
-            bluetoothHandler?.obtainMessage(BluetoothConstants.MESSAGE_STATE_CHANGE, bluetoothConnection!!.state, -1)?.sendToTarget()
+            // Force disconnect and try fresh
+            Log.w(TAG, "Connection exists with state ${bluetoothConnection!!.state}, forcing disconnect and retrying")
+            try {
+                bluetoothConnection?.stop()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping connection for retry", e)
+            }
+            bluetoothConnection = null
+            bluetoothConnection =
+                if (isBle) BluetoothBleConnection(mContext = context, bluetoothHandler!!, autoConnect = autoConnect)
+                else BluetoothConnection(bluetoothHandler!!)
+            if ("" != address) {
+                bluetoothConnect(address, result)
+            } else {
+                result.success(false)
+                bluetoothHandler?.obtainMessage(BluetoothConstants.MESSAGE_STATE_CHANGE, bluetoothConnection!!.state, -1)?.sendToTarget()
+            }
         }
     }
 
-    /// permite reconectar el dispositivo
+    /// permite reconectar el dispositivo con limpeza completa e backoff exponencial
     private val reconnect = Runnable {
-        bluetoothConnection?.stop()
-        if (result != null)
+        Log.d(TAG, "Auto-reconnect attempt ${retryCount + 1}/$MAX_RETRY_COUNT")
+        try {
+            bluetoothConnection?.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping connection during reconnect", e)
+        }
+        bluetoothConnection = null
+
+        // Create a fresh connection instance
+        bluetoothConnection = BluetoothConnection(bluetoothHandler!!)
+        if (result != null && mConnectedDeviceAddress != null) {
             bluetoothConnect(mConnectedDeviceAddress, result!!)
+        }
+        retryCount++
     }
 
     fun autoConnectBt() {
         if (bluetoothConnection is BluetoothConnection && reconnectBluetooth) {
+            if (retryCount >= MAX_RETRY_COUNT) {
+                Log.w(TAG, "Max reconnect attempts ($MAX_RETRY_COUNT) reached, giving up auto-reconnect")
+                retryCount = 0
+                return
+            }
             mHandlerAutoConnect.removeCallbacks(reconnect)
-            mHandlerAutoConnect.postDelayed(reconnect, (1000 + Math.random() * 4000).toLong())
+            // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+            val delay = BASE_RETRY_DELAY_MS * (1L shl retryCount.coerceAtMost(4))
+            Log.d(TAG, "Scheduling auto-reconnect in ${delay}ms (attempt ${retryCount + 1}/$MAX_RETRY_COUNT)")
+            mHandlerAutoConnect.postDelayed(reconnect, delay)
         }
+    }
+
+    fun resetRetryCount() {
+        retryCount = 0
     }
 
     fun removeReconnectHandlers() {
@@ -229,23 +317,4 @@ class BluetoothService(private var bluetoothHandler: Handler?) {
         this.currentActivity = activity
     }
 
-    companion object {
-
-        private var mInstance: BluetoothService? = null
-        var bluetoothConnection: IBluetoothConnection? = null
-
-
-        fun getInstance(bluetoothHandler: Handler): BluetoothService {
-            if (mInstance == null) {
-                mInstance = BluetoothService(bluetoothHandler)
-            }
-            return mInstance!!
-        }
-
-        // Stops scanning after 4 seconds.
-        private const val SCAN_PERIOD: Long = 4 * 1000
-
-
-        const val TAG = "BluetoothPrinter"
-    }
 }

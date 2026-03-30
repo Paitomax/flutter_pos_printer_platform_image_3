@@ -93,6 +93,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
                     when (bluetoothStatus) {
                         BluetoothConstants.STATE_CONNECTED -> {
                             Log.w(TAG, " -------------------------- connection BT STATE_CONNECTED ")
+                            bluetoothService.resetRetryCount()
                             if (msg.obj != null)
                                 try {
                                     val result = msg.obj as Result?
@@ -179,6 +180,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
 
         if (this::bluetoothService.isInitialized) {
             bluetoothService.setHandler(null)
+            bluetoothService.bluetoothDisconnect()
         }
 
         if (this::adapter.isInitialized) {

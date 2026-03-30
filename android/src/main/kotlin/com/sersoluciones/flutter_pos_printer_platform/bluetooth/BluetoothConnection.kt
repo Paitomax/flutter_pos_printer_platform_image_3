@@ -218,13 +218,11 @@ class BluetoothConnection constructor(handler: Handler) : IBluetoothConnection {
         private val mmDevice: BluetoothDevice,
         private val mmResult: MethodChannel.Result,
     ) : Thread() {
-        private val mmSocket: BluetoothSocket?
+        private var mmSocket: BluetoothSocket?
+
         override fun run() {
-//            Log.i(TAG, "BEGIN mConnectThread");
             name = "ConnectThread"
             if (mmSocket == null) {
-
-                // Reset the ConnectThread because we're done
                 synchronized(this@BluetoothConnection) { mConnectThread = null }
                 connectionFailed(mmResult)
                 return
@@ -234,28 +232,46 @@ class BluetoothConnection constructor(handler: Handler) : IBluetoothConnection {
             mAdapter.cancelDiscovery()
 
             // Make a connection to the BluetoothSocket
+            var connected = false
             try {
                 // This is a blocking call and will only return on a
                 // successful connection or an exception
-                mmSocket.connect()
+                mmSocket!!.connect()
+                connected = true
             } catch (e: IOException) {
-
-                // Close the socket
+                Log.w(TAG, "Standard socket connect failed, trying fallback via reflection", e)
+                // Close the failed socket
                 try {
-                    mmSocket.close()
+                    mmSocket!!.close()
                 } catch (e2: IOException) {
                     Log.e(TAG, "unable to close() socket during connection failure")
                 }
 
-                // Reset the ConnectThread because we're done
-                synchronized(this@BluetoothConnection) { mConnectThread = null }
-                connectionFailed(mmResult)
-                return
+                // Fallback: use reflection to create socket on RFCOMM channel 1
+                // This resolves issues when another app left the RFCOMM channel in a bad state
+                try {
+                    val method = mmDevice.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    mmSocket = method.invoke(mmDevice, 1) as BluetoothSocket
+                    mmSocket!!.connect()
+                    connected = true
+                    Log.d(TAG, "Fallback reflection socket connected successfully")
+                } catch (e2: Exception) {
+                    Log.e(TAG, "Fallback reflection socket also failed", e2)
+                    try {
+                        mmSocket?.close()
+                    } catch (e3: IOException) {
+                        // ignore
+                    }
+                }
             } catch (e: NullPointerException) {
                 try {
-                    mmSocket.close()
+                    mmSocket?.close()
                 } catch (e2: IOException) {
+                    // ignore
                 }
+            }
+
+            if (!connected) {
                 synchronized(this@BluetoothConnection) { mConnectThread = null }
                 connectionFailed(mmResult)
                 return
@@ -265,7 +281,7 @@ class BluetoothConnection constructor(handler: Handler) : IBluetoothConnection {
             synchronized(this@BluetoothConnection) { mConnectThread = null }
 
             // Start the connected thread
-            connected(mmSocket, mmDevice, mmResult)
+            connected(mmSocket!!, mmDevice, mmResult)
         }
 
         fun cancel() {
@@ -349,14 +365,14 @@ class BluetoothConnection constructor(handler: Handler) : IBluetoothConnection {
         }
 
         fun cancel() {
-//            try {
-//                mmInStream.close()
-//            } catch (ignored: Exception) {
-//            }
-//            try {
-//                mmOutStream.close()
-//            } catch (ignored: Exception) {
-//            }
+            try {
+                mmInStream?.close()
+            } catch (ignored: Exception) {
+            }
+            try {
+                mmOutStream?.close()
+            } catch (ignored: Exception) {
+            }
             try {
                 mmSocket.close()
             } catch (e: IOException) {
