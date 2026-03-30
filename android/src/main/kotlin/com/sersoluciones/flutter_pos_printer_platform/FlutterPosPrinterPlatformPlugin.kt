@@ -180,7 +180,10 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
         if (this::bluetoothService.isInitialized) {
             bluetoothService.setHandler(null)
         }
-        adapter.setHandler(null)
+
+        if (this::adapter.isInitialized) {
+            adapter.setHandler(null)
+        }
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
@@ -239,7 +242,9 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
         currentActivity = binding.activity
         binding.addRequestPermissionsResultListener(this)
         binding.addActivityResultListener(this)
-        bluetoothService.setActivity(currentActivity)
+        if (this::bluetoothService.isInitialized) {
+            bluetoothService.setActivity(currentActivity)
+        }
     }
 
     override fun onDetachedFromActivity() {
