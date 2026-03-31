@@ -5,6 +5,82 @@
 //
 
 #import "ConnecterManager.h"
+#import <objc/runtime.h>
+
+#pragma mark - Safe cancelPeripheralConnection: swizzle
+
+@implementation CBCentralManager (SafeCancel)
+
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class class = [self class];
+
+        // Swizzle cancelPeripheralConnection:
+        {
+            SEL originalSelector = @selector(cancelPeripheralConnection:);
+            SEL swizzledSelector = @selector(safe_cancelPeripheralConnection:);
+
+            Method originalMethod = class_getInstanceMethod(class, originalSelector);
+            Method swizzledMethod = class_getInstanceMethod(class, swizzledSelector);
+
+            BOOL didAdd = class_addMethod(class,
+                                           originalSelector,
+                                           method_getImplementation(swizzledMethod),
+                                           method_getTypeEncoding(swizzledMethod));
+            if (didAdd) {
+                class_replaceMethod(class,
+                                    swizzledSelector,
+                                    method_getImplementation(originalMethod),
+                                    method_getTypeEncoding(originalMethod));
+            } else {
+                method_exchangeImplementations(originalMethod, swizzledMethod);
+            }
+        }
+
+        // Swizzle connectPeripheral:options:
+        {
+            SEL originalSelector = @selector(connectPeripheral:options:);
+            SEL swizzledSelector = @selector(safe_connectPeripheral:options:);
+
+            Method originalMethod = class_getInstanceMethod(class, originalSelector);
+            Method swizzledMethod = class_getInstanceMethod(class, swizzledSelector);
+
+            BOOL didAdd = class_addMethod(class,
+                                           originalSelector,
+                                           method_getImplementation(swizzledMethod),
+                                           method_getTypeEncoding(swizzledMethod));
+            if (didAdd) {
+                class_replaceMethod(class,
+                                    swizzledSelector,
+                                    method_getImplementation(originalMethod),
+                                    method_getTypeEncoding(originalMethod));
+            } else {
+                method_exchangeImplementations(originalMethod, swizzledMethod);
+            }
+        }
+    });
+}
+
+- (void)safe_cancelPeripheralConnection:(CBPeripheral *)peripheral {
+    if (peripheral == nil) {
+        NSLog(@"[CBCentralManager+SafeCancel] Blocked cancelPeripheralConnection: with nil peripheral");
+        return;
+    }
+    [self safe_cancelPeripheralConnection:peripheral];
+}
+
+- (void)safe_connectPeripheral:(CBPeripheral *)peripheral options:(NSDictionary<NSString *,id> *)options {
+    if (peripheral == nil) {
+        NSLog(@"[CBCentralManager+SafeCancel] Blocked connectPeripheral:options: with nil peripheral");
+        return;
+    }
+    [self safe_connectPeripheral:peripheral options:options];
+}
+
+@end
+
+#pragma mark - ConnecterManager
 
 @interface ConnecterManager(){
     ConnectMethod currentConnMethod;
@@ -23,12 +99,6 @@ static dispatch_once_t once;
     return manager;
 }
 
-/**
- *  方法说明：扫描外设
- *  @param serviceUUIDs 需要发现外设的UUID，设置为nil则发现周围所有外设
- *  @param options  其它可选操作
- *  @param discover 发现的设备
- */
 -(void)scanForPeripheralsWithServices:(nullable NSArray<CBUUID *> *)serviceUUIDs options:(nullable NSDictionary<NSString *, id> *)options discover:(void(^_Nullable)(CBPeripheral *_Nullable peripheral,NSDictionary<NSString *, id> *_Nullable advertisementData,NSNumber *_Nullable RSSI))discover{
     if (_bleConnecter == nil) {
         NSLog(@"[ConnecterManager] scanForPeripherals called but bleConnecter is nil");
@@ -37,10 +107,6 @@ static dispatch_once_t once;
     [_bleConnecter scanForPeripheralsWithServices:serviceUUIDs options:options discover:discover];
 }
 
-/**
- *  方法说明：更新蓝牙状态
- *  @param state 蓝牙状态
- */
 -(void)didUpdateState:(void(^)(NSInteger state))state {
     if (_bleConnecter == nil) {
         currentConnMethod = BLUETOOTH;
@@ -60,17 +126,11 @@ static dispatch_once_t once;
     }
 }
 
-/**
- *  方法说明：停止扫描
- */
 -(void)stopScan {
     if (_bleConnecter == nil) return;
     [_bleConnecter stopScan];
 }
 
-/**
- *  连接
- */
 -(void)connectPeripheral:(CBPeripheral *)peripheral options:(nullable NSDictionary<NSString *,id> *)options timeout:(NSUInteger)timeout connectBlack:(void(^_Nullable)(ConnectState state)) connectState{
     if (_bleConnecter == nil) {
         NSLog(@"[ConnecterManager] connectPeripheral called but bleConnecter is nil");
@@ -82,6 +142,12 @@ static dispatch_once_t once;
         if (connectState) connectState(CONNECT_STATE_FAILT);
         return;
     }
+
+    // Simply re-assign _connecter and let the GSDK handle reconnection internally.
+    // The GSDK's connectPeripheral: will disconnect any previous connection if needed.
+    // We never recreate BLEConnecter — a single instance with a single CBCentralManager
+    // is used for the entire app lifetime to avoid orphaned managers blocking BLE scan.
+    _connecter = _bleConnecter;
     [_bleConnecter connectPeripheral:peripheral options:options timeout:timeout connectBlack:connectState];
 }
 
@@ -126,19 +192,16 @@ static dispatch_once_t once;
 }
 
 -(void)close {
-    @try {
-        if (_connecter) {
-            [_connecter close];
+    // Disconnect so other devices can connect to the printer.
+    // cancelPeripheralConnection: is swizzled to be nil-safe, so closePeripheral:
+    // will no longer crash even if the GSDK internally passes nil.
+    if (_bleConnecter != nil) {
+        CBPeripheral *peripheral = _bleConnecter.connPeripheral;
+        if (peripheral != nil) {
+            NSLog(@"[ConnecterManager] Disconnecting peripheral: %@", peripheral.name);
+            [_bleConnecter closePeripheral:peripheral];
         }
-    } @catch (NSException *e) {
-        NSLog(@"[ConnecterManager] close exception: %@", e);
-    }
-    switch (currentConnMethod) {
-        case BLUETOOTH:
-            _bleConnecter = nil;
-            break;
-        default:
-            break;
+        _bleConnecter.connPeripheral = nil;
     }
     _connecter = nil;
 }

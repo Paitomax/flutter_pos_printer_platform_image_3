@@ -78,26 +78,51 @@
     @try {
       NSLog(@"connect device begin -> %@", [device objectForKey:@"name"]);
       NSString *address = [device objectForKey:@"address"];
-      CBPeripheral *peripheral = address ? [_scannedPeripherals objectForKey:address] : nil;
 
-      if (peripheral == nil) {
-        NSLog(@"[FlutterPosPrinterPlatformPlugin] Peripheral not found for address: %@", address);
-        result([FlutterError errorWithCode:@"DEVICE_NOT_FOUND"
-                                   message:@"Bluetooth device not found. Please scan again."
-                                   details:address]);
+      if (address == nil || address.length == 0) {
+        NSLog(@"[FlutterPosPrinterPlatformPlugin] No address provided");
+        result([FlutterError errorWithCode:@"INVALID_ADDRESS"
+                                   message:@"No device address provided"
+                                   details:nil]);
         return;
       }
 
-      __weak typeof(self) weakSelf = self;
-      self.state = ^(ConnectState state) {
-        __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (strongSelf) {
-          [strongSelf updateConnectState:state];
-        }
-      };
-      [Manager connectPeripheral:peripheral options:nil timeout:5 connectBlack:self.state];
+      // Ensure BLE is initialized
+      if (Manager.bleConnecter == nil) {
+        NSLog(@"[FlutterPosPrinterPlatformPlugin] bleConnecter is nil, initializing BLE and scanning...");
+        __weak typeof(self) weakSelf = self;
+        __block BOOL resultSent = NO;
 
-      result(nil);
+        [Manager didUpdateState:^(NSInteger state) {
+          if (state == CBCentralManagerStatePoweredOn && !resultSent) {
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (strongSelf) {
+              // BLE is ready — scan to find the device
+              [strongSelf scanAndConnect:address result:result resultSent:&resultSent];
+            }
+          } else if ((state == CBCentralManagerStatePoweredOff ||
+                      state == CBCentralManagerStateUnsupported ||
+                      state == CBCentralManagerStateUnauthorized) && !resultSent) {
+            resultSent = YES;
+            result(@(NO));
+          }
+        }];
+        return;
+      }
+
+      // BLE is initialized — check if peripheral is in cache
+      CBPeripheral *peripheral = [_scannedPeripherals objectForKey:address];
+
+      if (peripheral != nil) {
+        // Peripheral found in cache — connect directly
+        [self connectToPeripheral:peripheral result:result];
+      } else {
+        // Peripheral not in cache — do a quick scan to find it
+        NSLog(@"[FlutterPosPrinterPlatformPlugin] Peripheral not in cache, scanning for address: %@", address);
+        __block BOOL resultSent = NO;
+        [self scanAndConnect:address result:result resultSent:&resultSent];
+      }
+
     } @catch(NSException *e) {
       NSLog(@"[FlutterPosPrinterPlatformPlugin] connect exception: %@", e);
       result([FlutterError errorWithCode:@"CONNECT_ERROR"
@@ -140,12 +165,11 @@
            char cArray[len];
 
            for (int i = 0; i < len; ++i) {
-//               NSLog(@"** ind_%d (d): %@, %d", i, bytes[i], [bytes[i] charValue]);
                cArray[i] = [bytes[i] charValue];
            }
            NSData *data2 = [NSData dataWithBytes:cArray length:sizeof(cArray)];
-//           NSLog(@"bytes in hex: %@", [data2 description]);
-           [Manager write:data2];
+
+           [Manager write:data2 progress:nil receCallBack:nil];
            result(nil);
        } @catch(NSException *e) {
            NSLog(@"[FlutterPosPrinterPlatformPlugin] writeData exception: %@", e);
@@ -171,6 +195,71 @@
         }
     }];
     
+}
+
+/**
+ * Quick scan to find a specific peripheral by UUID, then connect to it.
+ * Times out after 5 seconds if the device is not found.
+ */
+-(void)scanAndConnect:(NSString *)address result:(FlutterResult)result resultSent:(BOOL *)resultSent {
+    NSLog(@"[FlutterPosPrinterPlatformPlugin] scanAndConnect started for address: %@", address);
+
+    // Set a timeout for the scan
+    __block BOOL found = NO;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (!found && !(*resultSent)) {
+            *resultSent = YES;
+            [Manager stopScan];
+            NSLog(@"[FlutterPosPrinterPlatformPlugin] scanAndConnect timed out for address: %@", address);
+            result(@(NO));
+        }
+    });
+
+    // Start scanning
+    [Manager scanForPeripheralsWithServices:nil options:nil discover:^(CBPeripheral * _Nullable peripheral, NSDictionary<NSString *,id> * _Nullable advertisementData, NSNumber * _Nullable RSSI) {
+        if (peripheral != nil && peripheral.name != nil && peripheral.name.length > 0) {
+            // Cache every discovered peripheral
+            [self.scannedPeripherals setObject:peripheral forKey:[[peripheral identifier] UUIDString]];
+
+            // Check if this is the device we're looking for
+            if ([[[peripheral identifier] UUIDString] isEqualToString:address]) {
+                found = YES;
+                [Manager stopScan];
+                NSLog(@"[FlutterPosPrinterPlatformPlugin] scanAndConnect found device: %@", peripheral.name);
+
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (!(*resultSent)) {
+                        [self connectToPeripheral:peripheral result:result];
+                    }
+                });
+            }
+        }
+    }];
+}
+
+/**
+ * Connect to a specific peripheral and return the result to Dart.
+ */
+-(void)connectToPeripheral:(CBPeripheral *)peripheral result:(FlutterResult)result {
+    __block BOOL resultSent = NO;
+    __weak typeof(self) weakSelf = self;
+    self.state = ^(ConnectState state) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf) {
+            [strongSelf updateConnectState:state];
+        }
+        // Return the connection result to Dart
+        if (!resultSent) {
+            if (state == CONNECT_STATE_CONNECTED) {
+                resultSent = YES;
+                result(@(YES));
+            } else if (state == CONNECT_STATE_FAILT || state == CONNECT_STATE_TIMEOUT || state == CONNECT_STATE_DISCONNECT) {
+                resultSent = YES;
+                result(@(NO));
+            }
+        }
+    };
+    [Manager connectPeripheral:peripheral options:nil timeout:5 connectBlack:self.state];
 }
 
 -(void)updateConnectState:(ConnectState)state {

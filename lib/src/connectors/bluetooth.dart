@@ -199,7 +199,8 @@ class BluetoothPrinterConnector implements PrinterConnector<BluetoothPrinterInpu
       return await flutterPrinterChannel.invokeMethod('onStartConnection', params);
     } else if (Platform.isIOS) {
       Map<String, dynamic> params = {"name": model?.name ?? name, "address": model?.address ?? address};
-      return await iosChannel.invokeMethod('connect', params);
+      final result = await iosChannel.invokeMethod('connect', params);
+      return result ?? false;
     }
     return false;
   }
@@ -222,9 +223,15 @@ class BluetoothPrinterConnector implements PrinterConnector<BluetoothPrinterInpu
 
   @override
   Future<bool> disconnect({int? delayMs}) async {
-    if (Platform.isAndroid)
+    if (Platform.isAndroid) {
       await flutterPrinterChannel.invokeMethod('disconnect');
-    else if (Platform.isIOS) await iosChannel.invokeMethod('disconnect');
+    } else if (Platform.isIOS) {
+      await iosChannel.invokeMethod('disconnect');
+      // Give CoreBluetooth time to process the disconnection asynchronously.
+      // The GSDK's BLEConnecter internally calls cancelPeripheralConnection:
+      // which can crash if a new connectPeripheral: is called too soon.
+      await Future.delayed(Duration(milliseconds: delayMs ?? 1000));
+    }
     return false;
   }
 
