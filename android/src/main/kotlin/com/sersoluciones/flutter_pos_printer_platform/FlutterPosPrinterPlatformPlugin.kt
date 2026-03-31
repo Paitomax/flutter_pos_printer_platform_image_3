@@ -83,14 +83,15 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
 
     private val bluetoothHandler = object : Handler(Looper.getMainLooper()) {
 
-        private val bluetoothStatus: Int
-            get() = BluetoothService.bluetoothConnection?.state ?: 99
-
         override fun handleMessage(msg: Message) {
             super.handleMessage(msg)
             when (msg.what) {
                 BluetoothConstants.MESSAGE_STATE_CHANGE -> {
-                    when (bluetoothStatus) {
+                    // Use msg.arg1 (the state sent in the message) instead of reading
+                    // the current connection state, which may have already changed
+                    // due to race conditions (e.g., STATE_FAILED -> STATE_NONE transition)
+                    val reportedState = msg.arg1
+                    when (reportedState) {
                         BluetoothConstants.STATE_CONNECTED -> {
                             Log.w(TAG, " -------------------------- connection BT STATE_CONNECTED ")
                             bluetoothService.resetRetryCount()

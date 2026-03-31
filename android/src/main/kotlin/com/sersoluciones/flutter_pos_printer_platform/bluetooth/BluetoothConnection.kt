@@ -20,6 +20,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.os.Bundle
 import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.sersoluciones.flutter_pos_printer_platform.R
 import io.flutter.plugin.common.MethodChannel
@@ -219,6 +220,9 @@ class BluetoothConnection constructor(handler: Handler) : IBluetoothConnection {
         private val mmResult: MethodChannel.Result,
     ) : Thread() {
         private var mmSocket: BluetoothSocket?
+        @Volatile
+        private var timedOut = false
+        private val timeoutHandler = Handler(Looper.getMainLooper())
 
         override fun run() {
             name = "ConnectThread"
@@ -231,6 +235,20 @@ class BluetoothConnection constructor(handler: Handler) : IBluetoothConnection {
             // Always cancel discovery because it will slow down a connection
             mAdapter.cancelDiscovery()
 
+            // Schedule a timeout to close the socket if connect() blocks too long
+            val timeoutRunnable = Runnable {
+                if (!timedOut) {
+                    timedOut = true
+                    Log.w(TAG, "Connection timed out after ${CONNECT_TIMEOUT_MS}ms, closing socket")
+                    try {
+                        mmSocket?.close()
+                    } catch (e: IOException) {
+                        Log.e(TAG, "close() of connect socket failed on timeout")
+                    }
+                }
+            }
+            timeoutHandler.postDelayed(timeoutRunnable, CONNECT_TIMEOUT_MS)
+
             // Make a connection to the BluetoothSocket
             var connected = false
             try {
@@ -239,28 +257,34 @@ class BluetoothConnection constructor(handler: Handler) : IBluetoothConnection {
                 mmSocket!!.connect()
                 connected = true
             } catch (e: IOException) {
-                Log.w(TAG, "Standard socket connect failed, trying fallback via reflection", e)
-                // Close the failed socket
-                try {
-                    mmSocket!!.close()
-                } catch (e2: IOException) {
-                    Log.e(TAG, "unable to close() socket during connection failure")
-                }
-
-                // Fallback: use reflection to create socket on RFCOMM channel 1
-                // This resolves issues when another app left the RFCOMM channel in a bad state
-                try {
-                    val method = mmDevice.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
-                    mmSocket = method.invoke(mmDevice, 1) as BluetoothSocket
-                    mmSocket!!.connect()
-                    connected = true
-                    Log.d(TAG, "Fallback reflection socket connected successfully")
-                } catch (e2: Exception) {
-                    Log.e(TAG, "Fallback reflection socket also failed", e2)
+                if (timedOut) {
+                    Log.w(TAG, "Socket connect threw IOException due to timeout")
+                } else {
+                    Log.w(TAG, "Standard socket connect failed, trying fallback via reflection", e)
+                    // Close the failed socket
                     try {
-                        mmSocket?.close()
-                    } catch (e3: IOException) {
-                        // ignore
+                        mmSocket!!.close()
+                    } catch (e2: IOException) {
+                        Log.e(TAG, "unable to close() socket during connection failure")
+                    }
+
+                    // Fallback: use reflection to create socket on RFCOMM channel 1
+                    // This resolves issues when another app left the RFCOMM channel in a bad state
+                    if (!timedOut) {
+                        try {
+                            val method = mmDevice.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                            mmSocket = method.invoke(mmDevice, 1) as BluetoothSocket
+                            mmSocket!!.connect()
+                            connected = true
+                            Log.d(TAG, "Fallback reflection socket connected successfully")
+                        } catch (e2: Exception) {
+                            Log.e(TAG, "Fallback reflection socket also failed", e2)
+                            try {
+                                mmSocket?.close()
+                            } catch (e3: IOException) {
+                                // ignore
+                            }
+                        }
                     }
                 }
             } catch (e: NullPointerException) {
@@ -270,6 +294,9 @@ class BluetoothConnection constructor(handler: Handler) : IBluetoothConnection {
                     // ignore
                 }
             }
+
+            // Cancel the timeout since we got a result (success or failure)
+            timeoutHandler.removeCallbacks(timeoutRunnable)
 
             if (!connected) {
                 synchronized(this@BluetoothConnection) { mConnectThread = null }
@@ -285,6 +312,7 @@ class BluetoothConnection constructor(handler: Handler) : IBluetoothConnection {
         }
 
         fun cancel() {
+            timeoutHandler.removeCallbacksAndMessages(null)
             try {
                 mmSocket?.close()
             } catch (e: IOException) {
@@ -388,6 +416,9 @@ class BluetoothConnection constructor(handler: Handler) : IBluetoothConnection {
 
         // Key names received from the BluetoothChatService Handler
         const val TOAST = "toast"
+
+        // Connection timeout in milliseconds (10 seconds)
+        private const val CONNECT_TIMEOUT_MS = 10_000L
 
         //Intent data
         //    public static final String SERVICE_BT_CHANGE_STATE = "com.ospinn.gettze.BT_CHG_STATE";
